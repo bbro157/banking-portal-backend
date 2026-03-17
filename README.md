@@ -1,10 +1,13 @@
 # Banking Portal Backend
 
-Simple backend for a banking portal app.
+Simple banking portal backend built with Python, FastAPI, and PostgreSQL.
 
-Tech stack:
-- Python
-- PostgreSQL
-- FastAPI (coming next)
+## Setup
 
-Educational project (not production secure)
+1. Create a PostgreSQL database named `banking_portal`
+2. Run `schema.sql`
+3. Run `seed.sql`
+4. Install dependencies:
+
+```bash
+pip install -r requirements.txt
