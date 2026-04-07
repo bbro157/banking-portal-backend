@@ -23,6 +23,12 @@ class TransferRequest(BaseModel):
     amount: float
 
 
+class RegisterRequest(BaseModel):
+    username: str
+    password: str
+    full_name: str
+
+
 @app.get("/")
 def root():
     return {"message": "Banking API is running"}
@@ -33,7 +39,7 @@ def get_users():
     conn = get_connection()
     cur = conn.cursor()
 
-    cur.execute("SELECT id, username, full_name FROM users;")
+    cur.execute("SELECT id, username, full_name, is_admin FROM users;")
     users = cur.fetchall()
 
     cur.close()
@@ -77,6 +83,86 @@ def get_transactions(account_id: int):
     conn.close()
 
     return transactions
+
+@app.get("/admin/users-accounts")
+def get_all_users_accounts():
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT 
+            u.id AS user_id,
+            u.username,
+            u.full_name,
+            u.is_admin,
+            a.id AS account_id,
+            a.account_type,
+            a.balance,
+            a.account_number
+        FROM users u
+        LEFT JOIN accounts a ON u.id = a.user_id
+        ORDER BY u.id, a.id;
+    """)
+    results = cur.fetchall()
+
+    cur.close()
+    conn.close()
+
+    return results
+
+
+@app.post("/register")
+def register_user(data: RegisterRequest):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute(
+            "SELECT id FROM users WHERE username = %s;",
+            (data.username,)
+        )
+        existing_user = cur.fetchone()
+
+        if existing_user:
+            raise HTTPException(status_code=400, detail="Username already exists")
+
+        cur.execute("""
+            INSERT INTO users (username, password, full_name)
+            VALUES (%s, %s, %s)
+            RETURNING id;
+        """, (data.username, data.password, data.full_name))
+
+        new_user_id = cur.fetchone()[0]
+
+        checking_account_number = f"CHK{10000 + new_user_id}"
+        savings_account_number = f"SAV{10000 + new_user_id}"
+
+        cur.execute("""
+            INSERT INTO accounts (user_id, account_type, balance, account_number)
+            VALUES (%s, %s, %s, %s);
+        """, (new_user_id, "checking", 0.00, checking_account_number))
+
+        cur.execute("""
+            INSERT INTO accounts (user_id, account_type, balance, account_number)
+            VALUES (%s, %s, %s, %s);
+        """, (new_user_id, "savings", 0.00, savings_account_number))
+
+        conn.commit()
+
+        return {
+            "message": "User created successfully",
+            "user_id": new_user_id
+        }
+
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        cur.close()
+        conn.close()
 
 
 @app.post("/transfer")

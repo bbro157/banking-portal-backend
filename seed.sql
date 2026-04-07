@@ -1,13 +1,14 @@
-INSERT INTO users (username, password, full_name)
+INSERT INTO users (username, password, full_name, is_admin)
 VALUES
-('alice', 'password123', 'Alice Johnson'),
-('bob', 'password123', 'Bob Smith');
+('dev', 'dev123', 'Developer Admin', TRUE),
+('alice', 'password123', 'Alice Johnson', FALSE),
+('bob', 'password123', 'Bob Smith', FALSE);
 
 INSERT INTO accounts (user_id, account_type, balance, account_number)
 VALUES
-(1, 'checking', 1500.00, 'CHK10001'),
-(1, 'savings', 3000.00, 'SAV10001'),
-(2, 'checking', 800.00, 'CHK10002');
+(2, 'checking', 1500.00, 'CHK10001'),
+(2, 'savings', 3000.00, 'SAV10001'),
+(3, 'checking', 800.00, 'CHK10002');
 
 INSERT INTO transactions (from_account_id, to_account_id, amount, transaction_type, created_at)
 VALUES
