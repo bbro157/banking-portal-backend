@@ -9,17 +9,17 @@ CREATE TABLE users (
 
 CREATE TABLE accounts (
     id SERIAL PRIMARY KEY,
-    user_id INT REFERENCES users(id),
-    account_type VARCHAR(20),
-    balance NUMERIC(12,2),
-    account_number VARCHAR(20)
+    user_id INT NOT NULL REFERENCES users(id),
+    account_type VARCHAR(20) NOT NULL,
+    balance NUMERIC(12,2) NOT NULL CHECK (balance >= 0),
+    account_number VARCHAR(20) UNIQUE NOT NULL
 );
 
 CREATE TABLE transactions (
     id SERIAL PRIMARY KEY,
-    from_account_id INT,
-    to_account_id INT,
-    amount NUMERIC(12,2),
-    transaction_type VARCHAR(20),
+    from_account_id INT REFERENCES accounts(id),
+    to_account_id INT REFERENCES accounts(id),
+    amount NUMERIC(12,2) NOT NULL CHECK (amount > 0),
+    transaction_type VARCHAR(20) NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
