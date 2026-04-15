@@ -1,20 +1,90 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from fastapi import FastAPI, HTTPException, Depends
 from db import get_connection
+from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from passlib.context import CryptContext
+from jose import jwt, JWTError
+from datetime import datetime, timedelta
 
 app = FastAPI()
 
+SECRET_KEY = "supersecretkey"
+ALGORITHM = "HS256"
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+security = HTTPBearer()
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def hash_password(password: str):
+    return pwd_context.hash(password)
+
+
+def verify_password(plain_password: str, hashed_password: str):
+    return pwd_context.verify(plain_password, hashed_password)
+
+
+def create_token(username: str):
+    payload = {
+        "sub": username,
+        "exp": datetime.utcnow() + timedelta(hours=1)
+    }
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    token = credentials.credentials
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username = payload.get("sub")
+
+        if not username:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        return username
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+
+def get_current_admin(current_user: str = Depends(get_current_user)):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute("""
+            SELECT is_admin
+            FROM users
+            WHERE username = %s;
+        """, (current_user,))
+        result = cur.fetchone()
+
+        if not result or not result[0]:
+            raise HTTPException(status_code=403, detail="Admin access required")
+
+        return current_user
+    finally:
+        cur.close()
+        conn.close()
+
+
+class SignupRequest(BaseModel):
+    username: str
+    password: str
+    full_name: str
+    is_admin: bool = False
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
 
 
 class TransferRequest(BaseModel):
@@ -23,19 +93,91 @@ class TransferRequest(BaseModel):
     amount: float
 
 
-class RegisterRequest(BaseModel):
-    username: str
-    password: str
-    full_name: str
-
-
 @app.get("/")
 def root():
     return {"message": "Banking API is running"}
 
 
+@app.post("/signup")
+def signup(data: SignupRequest):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        hashed_pw = hash_password(data.password)
+
+        cur.execute("""
+            INSERT INTO users (username, password, full_name, is_admin)
+            VALUES (%s, %s, %s, %s)
+            RETURNING id, username, full_name, is_admin;
+        """, (data.username, hashed_pw, data.full_name, data.is_admin))
+
+        user = cur.fetchone()
+        conn.commit()
+
+        return {
+            "message": "User created successfully",
+            "user": user
+        }
+
+    except Exception:
+        conn.rollback()
+        raise HTTPException(status_code=400, detail="Username may already exist")
+
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.post("/login")
+def login(data: LoginRequest):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute("""
+            SELECT id, username, password
+            FROM users
+            WHERE username = %s;
+        """, (data.username,))
+        user = cur.fetchone()
+
+        if not user:
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+
+        user_id, username, hashed_password = user
+
+        if not verify_password(data.password, hashed_password):
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+
+        token = create_token(username)
+
+        return {
+            "access_token": token,
+            "token_type": "bearer"
+        }
+
+    finally:
+        cur.close()
+        conn.close()
+
+
 @app.get("/users")
-def get_users():
+def get_users(current_user: str = Depends(get_current_user)):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("SELECT id, username, full_name, is_admin FROM users;")
+    users = cur.fetchall()
+
+    cur.close()
+    conn.close()
+
+    return users
+
+
+@app.get("/admin/users")
+def admin_get_users(admin: str = Depends(get_current_admin)):
     conn = get_connection()
     cur = conn.cursor()
 
@@ -49,7 +191,7 @@ def get_users():
 
 
 @app.get("/accounts/{user_id}")
-def get_accounts(user_id: int):
+def get_accounts(user_id: int, current_user: str = Depends(get_current_user)):
     conn = get_connection()
     cur = conn.cursor()
 
@@ -67,7 +209,7 @@ def get_accounts(user_id: int):
 
 
 @app.get("/transactions/{account_id}")
-def get_transactions(account_id: int):
+def get_transactions(account_id: int, current_user: str = Depends(get_current_user)):
     conn = get_connection()
     cur = conn.cursor()
 
@@ -84,108 +226,26 @@ def get_transactions(account_id: int):
 
     return transactions
 
-@app.get("/admin/users-accounts")
-def get_all_users_accounts():
-    conn = get_connection()
-    cur = conn.cursor()
-
-    cur.execute("""
-        SELECT 
-            u.id AS user_id,
-            u.username,
-            u.full_name,
-            u.is_admin,
-            a.id AS account_id,
-            a.account_type,
-            a.balance,
-            a.account_number
-        FROM users u
-        LEFT JOIN accounts a ON u.id = a.user_id
-        ORDER BY u.id, a.id;
-    """)
-    results = cur.fetchall()
-
-    cur.close()
-    conn.close()
-
-    return results
-
-
-@app.post("/register")
-def register_user(data: RegisterRequest):
-    conn = get_connection()
-    cur = conn.cursor()
-
-    try:
-        cur.execute(
-            "SELECT id FROM users WHERE username = %s;",
-            (data.username,)
-        )
-        existing_user = cur.fetchone()
-
-        if existing_user:
-            raise HTTPException(status_code=400, detail="Username already exists")
-
-        cur.execute("""
-            INSERT INTO users (username, password, full_name)
-            VALUES (%s, %s, %s)
-            RETURNING id;
-        """, (data.username, data.password, data.full_name))
-
-        new_user_id = cur.fetchone()[0]
-
-        checking_account_number = f"CHK{10000 + new_user_id}"
-        savings_account_number = f"SAV{10000 + new_user_id}"
-
-        cur.execute("""
-            INSERT INTO accounts (user_id, account_type, balance, account_number)
-            VALUES (%s, %s, %s, %s);
-        """, (new_user_id, "checking", 0.00, checking_account_number))
-
-        cur.execute("""
-            INSERT INTO accounts (user_id, account_type, balance, account_number)
-            VALUES (%s, %s, %s, %s);
-        """, (new_user_id, "savings", 0.00, savings_account_number))
-
-        conn.commit()
-
-        return {
-            "message": "User created successfully",
-            "user_id": new_user_id
-        }
-
-    except HTTPException:
-        conn.rollback()
-        raise
-    except Exception as e:
-        conn.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        cur.close()
-        conn.close()
-
 
 @app.post("/transfer")
-def transfer_money(data: TransferRequest):
+def transfer_money(data: TransferRequest, current_user: str = Depends(get_current_user)):
     conn = get_connection()
     cur = conn.cursor()
 
     try:
         if data.amount <= 0:
-            raise HTTPException(status_code=400, detail="Amount must be greater than 0")
+            raise HTTPException(status_code=400, detail="Amount must be greater than zero")
 
         cur.execute("SELECT balance FROM accounts WHERE id = %s;", (data.from_account_id,))
-        from_result = cur.fetchone()
+        from_account = cur.fetchone()
 
         cur.execute("SELECT balance FROM accounts WHERE id = %s;", (data.to_account_id,))
-        to_result = cur.fetchone()
+        to_account = cur.fetchone()
 
-        if not from_result:
-            raise HTTPException(status_code=404, detail="From account not found")
-        if not to_result:
-            raise HTTPException(status_code=404, detail="To account not found")
+        if not from_account or not to_account:
+            raise HTTPException(status_code=404, detail="Account not found")
 
-        from_balance = from_result[0]
+        from_balance = from_account[0]
 
         if from_balance < data.amount:
             raise HTTPException(status_code=400, detail="Insufficient funds")
@@ -203,20 +263,42 @@ def transfer_money(data: TransferRequest):
         """, (data.amount, data.to_account_id))
 
         cur.execute("""
-            INSERT INTO transactions (from_account_id, to_account_id, amount, transaction_type, created_at)
-            VALUES (%s, %s, %s, 'transfer', CURRENT_TIMESTAMP);
-        """, (data.from_account_id, data.to_account_id, data.amount))
+            INSERT INTO transactions (from_account_id, to_account_id, amount, transaction_type)
+            VALUES (%s, %s, %s, %s);
+        """, (data.from_account_id, data.to_account_id, data.amount, "transfer"))
 
         conn.commit()
 
-        return {"message": "Transfer successful"}
+        return {"message": "Transfer completed successfully"}
 
     except HTTPException:
         conn.rollback()
         raise
-    except Exception as e:
+
+    except Exception:
         conn.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Transfer failed")
+
     finally:
         cur.close()
         conn.close()
+
+
+@app.get("/search")
+def search_users(query: str, current_user: str = Depends(get_current_user)):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT id, username, full_name, is_admin
+        FROM users
+        WHERE username ILIKE %s
+        OR full_name ILIKE %s;
+    """, (f"%{query}%", f"%{query}%"))
+
+    results = cur.fetchall()
+
+    cur.close()
+    conn.close()
+
+    return results
