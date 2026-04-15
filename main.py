@@ -100,10 +100,13 @@ def root():
 
 @app.post("/signup")
 def signup(data: SignupRequest):
-    conn = get_connection()
-    cur = conn.cursor()
+    conn = None
+    cur = None
 
     try:
+        conn = get_connection()
+        cur = conn.cursor()
+
         hashed_pw = hash_password(data.password)
 
         cur.execute("""
@@ -120,21 +123,27 @@ def signup(data: SignupRequest):
             "user": user
         }
 
-    except Exception:
-        conn.rollback()
-        raise HTTPException(status_code=400, detail="Username may already exist")
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
 
     finally:
-        cur.close()
-        conn.close()
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
 
 
 @app.post("/login")
 def login(data: LoginRequest):
-    conn = get_connection()
-    cur = conn.cursor()
+    conn = None
+    cur = None
 
     try:
+        conn = get_connection()
+        cur = conn.cursor()
+
         cur.execute("""
             SELECT id, username, password
             FROM users
@@ -158,8 +167,10 @@ def login(data: LoginRequest):
         }
 
     finally:
-        cur.close()
-        conn.close()
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
 
 
 @app.get("/users")
@@ -229,10 +240,13 @@ def get_transactions(account_id: int, current_user: str = Depends(get_current_us
 
 @app.post("/transfer")
 def transfer_money(data: TransferRequest, current_user: str = Depends(get_current_user)):
-    conn = get_connection()
-    cur = conn.cursor()
+    conn = None
+    cur = None
 
     try:
+        conn = get_connection()
+        cur = conn.cursor()
+
         if data.amount <= 0:
             raise HTTPException(status_code=400, detail="Amount must be greater than zero")
 
@@ -272,16 +286,20 @@ def transfer_money(data: TransferRequest, current_user: str = Depends(get_curren
         return {"message": "Transfer completed successfully"}
 
     except HTTPException:
-        conn.rollback()
+        if conn:
+            conn.rollback()
         raise
 
-    except Exception:
-        conn.rollback()
-        raise HTTPException(status_code=500, detail="Transfer failed")
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
 
     finally:
-        cur.close()
-        conn.close()
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
 
 
 @app.get("/search")
