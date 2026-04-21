@@ -28,6 +28,10 @@ class RegisterRequest(BaseModel):
     password: str
     full_name: str
 
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
 
 @app.get("/")
 def root():
@@ -216,6 +220,39 @@ def transfer_money(data: TransferRequest):
         raise
     except Exception as e:
         conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.post("/login")
+def login_user(data: LoginRequest):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute("""
+            SELECT id, username, full_name, is_admin
+            FROM users
+            WHERE username = %s AND password = %s;
+        """, (data.username, data.password))
+
+        user = cur.fetchone()
+
+        if not user:
+            raise HTTPException(status_code=401, detail="Invalid username or password")
+
+        return {
+            "id": user[0],
+            "username": user[1],
+            "full_name": user[2],
+            "is_admin": user[3]
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         cur.close()

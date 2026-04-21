@@ -9,6 +9,7 @@ VALUES
 (2, 'checking', 1500.00, 'CHK10001'),
 (2, 'savings', 3000.00, 'SAV10001'),
 (3, 'checking', 800.00, 'CHK10002');
+(3, 'savings', 1200.00, 'SAV10002');
 
 INSERT INTO transactions (from_account_id, to_account_id, amount, transaction_type, created_at)
 VALUES
